@@ -21,7 +21,7 @@ class ParseException(Exception):
 class Line(object):
     """Track data for each line in stacktrace"""
     def __init__(self, filename, line_number, function_name, code, class_name=None,
-                 native_method=False, unknown_source=False):
+                 native_method=False, unknown_source=False, func_args=None):
         self.trace_filename = filename
         self.line_number = line_number
         self.function_name = function_name
@@ -29,6 +29,7 @@ class Line(object):
         self.class_name = class_name  # Java specific
         self.native_method = native_method  # Java specific
         self.unknown_source = unknown_source  # Java specific
+        self.func_args = func_args # Go specific
         self.git_filename = None
 
     def traceback_format(self):
@@ -245,8 +246,52 @@ class JavaScriptTraceback(Traceback):
         return [f for f in git_files if trace_filename.endswith(f)]
 
 
+class GoTraceback(Traceback):
+    # This class matches a stacktrace that looks similar to tests/examples/go1.trace
+
+    def extract_traceback(self, lines):
+        if not lines[0].startswith('\t'):
+            self.header = lines[0] + '\n'
+        lines = "".join(lines[1:]).replace("\n", "")
+        lines = re.split(r"\s\+0x[0-9a-f]+", lines)
+        lines = [line for line in lines if line != '']
+        extracted = []
+        for line in lines:
+            extracted.append(self._extract_line(line))
+        self.lines = extracted
+        if not self.lines:
+            raise ParseException("Failed to parse stacktrace")
+
+    def _extract_line(self, line_string):
+        pattern = r"(?P<symbol>[^(]+)\((?P<func_args>[^)]*)\)\t(?P<path>[^\s]+):(?P<line>\d+)$"
+        result = re.match(pattern, line_string)
+        if result:
+            frame = result.groupdict()
+        else:
+            log.debug("Failed to parse frame %s", line_string)
+            raise ParseException("Failed to match line")
+
+        code = "{}()".format(frame.get('symbol'))
+
+        return Line(frame.get('path'), frame.get('line'), frame.get('symbol'),
+                    code, None, None, None, frame.get('func_args'))
+
+    def traceback_format(self):
+        return [line.traceback_format() for line in self.lines]
+
+    def _format_line(self, line):
+        return "{}({})\n\t{}:{}\n".format(line.function_name, line.func_args,
+                                      line.trace_filename, line.line_number)
+
+    def format_lines(self):
+        return ''.join(map(self._format_line, self.lines))
+
+    def file_match(self, trace_filename, git_files):
+        return [f for f in git_files if f.endswith(trace_filename)]
+
 def parse_trace(traceback_string):
-    languages = [PythonTraceback, JavaTraceback, JavaScriptTraceback]
+    languages = [PythonTraceback, JavaTraceback, JavaScriptTraceback,
+                 GoTraceback]
     for language in languages:
         try:
             return language(traceback_string)

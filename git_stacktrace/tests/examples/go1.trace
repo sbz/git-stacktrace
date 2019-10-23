@@ -1,0 +1,5 @@
+goroutine 1 [running]:
+main.shouldPanic()
+	/tmp/go-stacktrace-repo/test.go:9 +0x18
+main.main()
+	/tmp/go-stacktrace-repo/test.go:15 +0x20
